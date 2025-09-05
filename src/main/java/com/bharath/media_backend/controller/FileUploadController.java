@@ -1,36 +1,53 @@
 package com.bharath.media_backend.controller;
 
-
-
-import org.springframework.web.bind.annotation.*;
-import org.springframework.beans.factory.annotation.Value;
+import com.bharath.media_backend.service.FileUploadService;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
-import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.file.*;
+import java.net.MalformedURLException;
 
 @RestController
 @RequestMapping("/media")
 public class FileUploadController {
 
-    private final Path uploadDir;
+    private final FileUploadService fileUploadService;
 
-    public FileUploadController(@Value("${app.upload.dir:uploads}") String uploadDir) throws IOException {
-        this.uploadDir = Paths.get(uploadDir).toAbsolutePath().normalize();
-        Files.createDirectories(this.uploadDir);
+    public FileUploadController(FileUploadService fileUploadService) {
+        this.fileUploadService = fileUploadService;
     }
 
+    /** Upload a file */
     @PostMapping("/upload")
-    public ResponseEntity<String> upload(@RequestParam("file") MultipartFile file) throws IOException {
-        if (file.isEmpty()) return ResponseEntity.badRequest().body("Empty file");
+    public ResponseEntity<String> upload(@RequestParam("file") MultipartFile file) {
+        try {
+            String fileUrl = fileUploadService.storeFile(file);
+            return ResponseEntity.ok(fileUrl);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().body("File upload failed: " + e.getMessage());
+        }
+    }
 
-        String filename = System.currentTimeMillis() + "-" + StringUtils.cleanPath(file.getOriginalFilename());
-        Path target = uploadDir.resolve(filename);
-        Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+    /** Download a file */
+    @GetMapping("/files/{filename:.+}")
+    public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
+        try {
+            Resource resource = fileUploadService.loadFileAsResource(filename);
 
-        String fileUrl = "/files/" + filename;
-        return ResponseEntity.ok(fileUrl);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "attachment; filename=\"" + resource.getFilename() + "\"")
+                    .body(resource);
+
+        } catch (MalformedURLException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 }
